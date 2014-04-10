@@ -6,8 +6,9 @@ import os
 import uuid
 import logging
 import platform
+import socket
 
-from packstack.installer import processors, utils, validators
+from packstack.installer import basedefs, processors, utils, validators
 from packstack.installer.exceptions import ScriptRuntimeError
 
 from packstack.modules.shortcuts import get_mq
@@ -408,6 +409,10 @@ def initSequences(controller):
              {'title': 'Adding Nova Keystone manifest entries', 'functions':[createkeystonemanifest]},
              {'title': 'Adding Nova Cert manifest entries', 'functions':[createcertmanifest]},
              {'title': 'Adding Nova Conductor manifest entries', 'functions':[createconductormanifest]},
+             {'title': 'Creating ssh keys for Nova migration',
+              'functions':[create_ssh_keys]},
+             {'title': 'Gathering ssh host keys for Nova migration',
+              'functions':[gather_host_keys]},
              {'title': 'Adding Nova Compute manifest entries', 'functions':[createcomputemanifest]},
              {'title': 'Adding Nova Scheduler manifest entries', 'functions':[createschedmanifest]},
              {'title': 'Adding Nova VNC Proxy manifest entries', 'functions':[createvncproxymanifest]},
@@ -496,8 +501,52 @@ def bring_up_ifcfg(host, device):
             raise ScriptRuntimeError(msg)
 
 
+def create_ssh_keys(config):
+    migration_key = os.path.join(basedefs.VAR_DIR, 'nova_migration_key')
+    # Generate key
+    local = utils.ScriptRunner()
+    local.append('ssh-keygen -t rsa -b 2048 -f "%s" -N ""' % migration_key)
+    local.execute()
+
+    with open(migration_key) as fp:
+        secret = fp.read().strip()
+    with open('%s.pub' % migration_key) as fp:
+        public = fp.read().strip()
+
+    config['NOVA_MIGRATION_KEY_TYPE'] = 'ssh-rsa'
+    config['NOVA_MIGRATION_KEY_PUBLIC'] = public.split()[1]
+    config['NOVA_MIGRATION_KEY_SECRET'] = secret
+
+def gather_host_keys(config):
+    global compute_hosts
+
+    for host in compute_hosts:
+        known_hosts = os.path.join(basedefs.VAR_DIR, 'known_hosts_%s' %
+                                   host)
+
+        local = utils.ScriptRunner()
+        local.append('ssh -o StrictHostkeyChecking=no '
+                     '-o UserKnownHostsFile="%s" '
+                     '"%s" true' % (known_hosts, host))
+        local.execute()
+
+        with open(known_hosts) as fp:
+            host_key = fp.read().strip()
+            config['HOST_KEY_%s' % host] = host_key
+
 def createcomputemanifest(config):
     global compute_hosts, network_hosts
+
+    ssh_hostkeys = ''
+    for host in compute_hosts:
+        _, host_key_type, host_key_data = config['HOST_KEY_%s' % host].split()
+        host_name, host_aliases, host_addrs = socket.gethostbyaddr(host)
+        config['SSH_HOST_NAME'] = host_name
+        config['SSH_HOST_IP'] = host_addrs[0]
+        config['SSH_HOST_KEY'] = host_key_data
+        config['SSH_HOST_KEY_TYPE'] = host_key_type
+        ssh_hostkeys += getManifestTemplate("sshkey.pp")
+
     for host in compute_hosts:
         config["CONFIG_NOVA_COMPUTE_HOST"] = host
         manifestdata = getManifestTemplate("nova_compute.pp")
@@ -541,6 +590,7 @@ def createcomputemanifest(config):
         manifestdata += getManifestTemplate("firewall.pp")
 
         manifestdata += "\n" + nova_config_options.getManifestEntry()
+        manifestdata += "\n" + ssh_hostkeys
         appendManifestFile(manifestfile, manifestdata)
 
 
