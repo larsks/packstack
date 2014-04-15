@@ -521,31 +521,30 @@ def gather_host_keys(config):
     global compute_hosts
 
     for host in compute_hosts:
-        known_hosts = os.path.join(basedefs.VAR_DIR, 'known_hosts_%s' %
-                                   host)
-
         local = utils.ScriptRunner()
-        local.append('ssh -o StrictHostkeyChecking=no '
-                     '-o UserKnownHostsFile="%s" '
-                     '"%s" true' % (known_hosts, host))
-        local.execute()
-
-        with open(known_hosts) as fp:
-            host_key = fp.read().strip()
-            config['HOST_KEY_%s' % host] = host_key
+        local.append('ssh-keyscan %s' % host)
+        retcode, hostkey = local.execute()
+        config['HOST_KEYS_%s' % host] = hostkey
 
 def createcomputemanifest(config):
     global compute_hosts, network_hosts
 
     ssh_hostkeys = ''
     for host in compute_hosts:
-        _, host_key_type, host_key_data = config['HOST_KEY_%s' % host].split()
         host_name, host_aliases, host_addrs = socket.gethostbyaddr(host)
-        config['SSH_HOST_NAME'] = host_name
-        config['SSH_HOST_IP'] = host_addrs[0]
-        config['SSH_HOST_KEY'] = host_key_data
-        config['SSH_HOST_KEY_TYPE'] = host_key_type
-        ssh_hostkeys += getManifestTemplate("sshkey.pp")
+
+        for hostkey in config['HOST_KEYS_%s' %host].split('\n'):
+            hostkey = hostkey.strip()
+            if not hostkey:
+                continue
+
+            _, host_key_type, host_key_data = hostkey.split()
+            config['SSH_HOST_NAME'] = host_name
+            config['SSH_HOST_ALIASES'] = ','.join('"%s"' % addr
+                   for addr in host_aliases + host_addrs)
+            config['SSH_HOST_KEY'] = host_key_data
+            config['SSH_HOST_KEY_TYPE'] = host_key_type
+            ssh_hostkeys += getManifestTemplate("sshkey.pp")
 
     for host in compute_hosts:
         config["CONFIG_NOVA_COMPUTE_HOST"] = host
