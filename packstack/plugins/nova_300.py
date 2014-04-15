@@ -531,7 +531,10 @@ def createcomputemanifest(config):
 
     ssh_hostkeys = ''
     for host in compute_hosts:
-        host_name, host_aliases, host_addrs = socket.gethostbyaddr(host)
+        try:
+            host_name, host_aliases, host_addrs = socket.gethostbyaddr(host)
+        except socket.herror:
+            host_name, host_aliases, host_addrs = (host, [], [])
 
         for hostkey in config['HOST_KEYS_%s' %host].split('\n'):
             hostkey = hostkey.strip()
