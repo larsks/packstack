@@ -27,12 +27,16 @@ nova_config{
     value => hiera('CONFIG_NOVA_COMPUTE_MIGRATE_URL');
 }
 
-$config_horizon_ssl = hiera('CONFIG_HORIZON_SSL')
+if $is_horizon_ssl == undef {
+  $is_horizon_ssl = hiera('CONFIG_HORIZON_SSL')
+}
 
-$vncproxy_proto = $config_horizon_ssl ? {
-  true    => 'https',
-  false   => 'http',
-  default => 'http',
+if $vncproxy_protocol == undef {
+  $vncproxy_protocol = $is_horizon_ssl ? {
+    true    => 'https',
+    false   => 'http',
+    default => 'http',
+  }
 }
 
 if ($::fqdn == '' or $::fqdn =~ /localhost/) {
@@ -45,7 +49,7 @@ if ($::fqdn == '' or $::fqdn =~ /localhost/) {
 class { 'nova::compute':
   enabled                       => true,
   vncproxy_host                 => hiera('CONFIG_CONTROLLER_HOST'),
-  vncproxy_protocol             => $vncproxy_proto,
+  vncproxy_protocol             => $vncproxy_protocol,
   vncserver_proxyclient_address => $vncproxy_server,
   compute_manager               => hiera('CONFIG_NOVA_COMPUTE_MANAGER'),
 }
